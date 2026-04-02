@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -18,7 +19,7 @@ import (
 )
 
 func printUsage() {
-	fmt.Println("mini-runc - a tiny container runtime for learning")
+	fmt.Println("mini-runc - a tiny container runtime")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  mini-runc run [flags] <command> [args...]")
@@ -55,6 +56,7 @@ func run(args []string) {
 
 	rootfsFlag := runCmd.String("rootfs", "", "path to the container root filesystem")
 	hostnameFlag := runCmd.String("hostname", "", "container hostname")
+	memoryFlag := runCmd.String("memory", "", "optional memory limit in bytes for the container cgroup v2 (e.g. 134217728 for 128MiB)")
 
 	if err := runCmd.Parse(args); err != nil {
 		panic(err)
@@ -120,7 +122,11 @@ func run(args []string) {
 		}
 		defer f.Close()
 
-
+		if *memoryFlag != "" {
+			if err := setupMemoryCgroup(cmd.Process.Pid, *memoryFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to configure memory cgroup: %v\n", err)
+			}
+		}
 
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGWINCH)
@@ -151,8 +157,45 @@ func run(args []string) {
 		if err := cmd.Start(); err != nil {
 			panic(err)
 		}
+
+		if *memoryFlag != "" {
+			if err := setupMemoryCgroup(cmd.Process.Pid, *memoryFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to configure memory cgroup: %v\n", err)
+			}
+		}
+
 		_ = cmd.Wait()
 	}
+}
+
+func setupMemoryCgroup(pid int, rawLimit string) error {
+	root := os.Getenv("CGROUP_ROOT")
+	if root == "" {
+		root = "/sys/fs/cgroup"
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "cgroup.controllers")); err != nil {
+		return fmt.Errorf("cgroup v2 not detected at %s (no cgroup.controllers): %w", root, err)
+	}
+
+	groupDir := filepath.Join(root, "mini-runc")
+	if err := os.MkdirAll(groupDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cgroup directory %s: %w", groupDir, err)
+	}
+
+	if _, err := strconv.ParseInt(rawLimit, 10, 64); err != nil {
+		return fmt.Errorf("memory limit must be an integer number of bytes: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(groupDir, "memory.max"), []byte(rawLimit+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write memory.max: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(groupDir, "cgroup.procs"), []byte(strconv.Itoa(pid)+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to add pid to cgroup.procs: %w", err)
+	}
+
+	return nil
 }
 
 func child() {

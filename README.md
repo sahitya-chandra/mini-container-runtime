@@ -1,4 +1,4 @@
-# mini-runc (learning project)
+# mini-runc
 
 Tiny container runtime in Go for my own learning.  
 Focus: namespaces, `pivot_root`, `/dev`/TTYs, and a bit of cgroups. 
@@ -78,7 +78,7 @@ and compare the output with what you see on the host.
 ## CLI overview
 
 ```text
-mini-runc - a tiny container runtime for learning
+mini-runc - a tiny container runtime
 
 Usage:
   mini-runc run [flags] <command> [args...]
@@ -89,6 +89,7 @@ Subcommands:
 Common flags for 'run':
   --rootfs   path to the container root filesystem (default from ROOTFS_PATH env)
   --hostname container hostname (default: container or CONTAINER_HOSTNAME env)
+  --memory   optional memory limit in bytes for a simple cgroup v2 (e.g. 134217728 for 128MiB)
 ```
 
 ## Namespaces used (and why)
@@ -120,6 +121,23 @@ mini-runc uses several Linux namespaces together:
 - **`pivot_root` vs `chroot`**: `pivot_root` fully swaps the root filesystem and hides the old root under `/oldroot`, which we then unmount. This is closer to what real containers do.
 - **Pseudo-filesystems**: `/proc`, `/sys`, `/dev`, and `devpts` are special filesystems the kernel provides; we mount them inside the container so tools like `ps`, `top`, shells, and TTYs work.
 - **PTY + TTY handling**: a pseudo-terminal connects your host terminal to the shell inside the container so interactive programs behave correctly.
+
+## Simple cgroup v2 memory limit
+
+mini-runc can optionally place the container's initial process into a **cgroup v2** with a `memory.max` limit:
+
+- It assumes cgroup v2 is mounted at `/sys/fs/cgroup` (override with `CGROUP_ROOT` if needed).
+- It creates/uses a subtree at `/sys/fs/cgroup/mini-runc`.
+- It writes the value you pass via `--memory` into `memory.max` and then adds the container process PID to `cgroup.procs`.
+
+Example (limit container to 128MiB, value is in bytes):
+
+```bash
+go build -o mini-runc .
+./mini-runc run --rootfs=/path/to/rootfs --memory=134217728 /bin/sh
+```
+
+Inside the container you can run a small test program (for example, in C or Go) that tries to allocate a lot of memory and watch it get killed or fail once it exceeds the limit. This is intentionally minimal and is meant only as a learning demo, not robust resource isolation.
 
 ## Minimal experiments / tests
 
