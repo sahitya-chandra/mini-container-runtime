@@ -21,7 +21,7 @@ jobs:
 
       - name: Go fmt (check)
         run: |
-          gofmt -w main.go
+          gofmt -w .
           git diff --exit-code
 
       - name: Go vet
