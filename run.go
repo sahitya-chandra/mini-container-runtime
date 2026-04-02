@@ -116,4 +116,3 @@ func run(args []string) {
 		_ = cmd.Wait()
 	}
 }
-
