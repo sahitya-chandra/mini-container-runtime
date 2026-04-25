@@ -13,11 +13,22 @@ import (
 	"golang.org/x/term"
 )
 
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return 1
+}
+
 func run(args []string) {
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 
 	rootfsFlag := runCmd.String("rootfs", "", "path to the container root filesystem")
 	hostnameFlag := runCmd.String("hostname", "", "container hostname")
+	memoryFlag := runCmd.String("memory", "", "memory limit in bytes for cgroup v2 (e.g. 134217728 for 128MiB)")
 
 	if err := runCmd.Parse(args); err != nil {
 		panic(err)
@@ -79,16 +90,23 @@ func run(args []string) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		f, err := pty.Start(cmd)
 		if err != nil {
-			panic(fmt.Sprintf("failed to start with PTY: %v", err))
+			fmt.Fprintf(os.Stderr, "failed to start with PTY: %v\n", err)
+			os.Exit(1)
 		}
 		defer f.Close()
+
+		if *memoryFlag != "" {
+			if err := setupMemoryCgroup(cmd.Process.Pid, *memoryFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to configure memory cgroup: %v\n", err)
+			}
+		}
 
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGWINCH)
 		go func() {
 			for range ch {
 				if err := pty.InheritSize(os.Stdin, f); err != nil {
-					fmt.Printf("error resizing pty: %s\n", err)
+					fmt.Fprintf(os.Stderr, "error resizing pty: %s\n", err)
 				}
 			}
 		}()
@@ -97,22 +115,30 @@ func run(args []string) {
 
 		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 		if err != nil {
-			panic(err)
+			fmt.Fprintf(os.Stderr, "failed to set raw mode: %v\n", err)
+			os.Exit(1)
 		}
 		defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 		go func() { _, _ = io.Copy(f, os.Stdin) }()
 		_, _ = io.Copy(os.Stdout, f)
 
-		_ = cmd.Wait()
+		os.Exit(exitCode(cmd.Wait()))
 	} else {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
-			panic(err)
+			fmt.Fprintf(os.Stderr, "failed to start container: %v\n", err)
+			os.Exit(1)
 		}
 
-		_ = cmd.Wait()
+		if *memoryFlag != "" {
+			if err := setupMemoryCgroup(cmd.Process.Pid, *memoryFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to configure memory cgroup: %v\n", err)
+			}
+		}
+
+		os.Exit(exitCode(cmd.Wait()))
 	}
 }

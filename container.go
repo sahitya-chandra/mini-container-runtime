@@ -66,7 +66,7 @@ func child() {
 	must(syscall.Mknod("/dev/random", syscall.S_IFCHR|0666, int(unix.Mkdev(1, 8))))
 	must(syscall.Mknod("/dev/urandom", syscall.S_IFCHR|0666, int(unix.Mkdev(1, 9))))
 
-	must(os.Symlink("/dev/console", "/dev/tty"))
+	must(syscall.Mknod("/dev/tty", syscall.S_IFCHR|0666, int(unix.Mkdev(5, 0))))
 
 	must(os.MkdirAll("/dev/pts", 0755))
 	must(syscall.Mount("devpts", "/dev/pts", "devpts", 0, "newinstance,ptmxmode=0666,mode=0620"))
